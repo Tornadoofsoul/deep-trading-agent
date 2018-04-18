@@ -1,19 +1,28 @@
 import json
+
+from os.path import join
 from ConfigParser import ConfigParser
 
 from utils.constants import *
 from utils.strings import *
 
+def add_parent_dir(parent_dir, path):
+    return join(parent_dir, path)
+
 def get_config(config_parser):
     config = {}
+    #Global
+    config[PARENT_DIR] = config_parser.get(GLOBAL, PARENT_DIR)
+
     #Logging
-    config[LOG_FILE] = config_parser.get(LOGGING, LOG_FILE)
-    config[SAVE_DIR] = config_parser.get(LOGGING, SAVE_DIR)
-    config[TENSORBOARD_LOG_DIR] = config_parser.get(LOGGING, TENSORBOARD_LOG_DIR)
+    config[LOG_FILE] = add_parent_dir(config[PARENT_DIR], config_parser.get(LOGGING, LOG_FILE))
+    config[SAVE_DIR] = add_parent_dir(config[PARENT_DIR], config_parser.get(LOGGING, SAVE_DIR))
+    config[TENSORBOARD_LOG_DIR] = add_parent_dir(config[PARENT_DIR], 
+                                                    config_parser.get(LOGGING, TENSORBOARD_LOG_DIR))
 
     #Preprocessing Dataset
-    config[TRANSACTIONS_FILE] = config_parser.get(PREPROCESSING, TRANSACTIONS_FILE)
-    config[DATASET_PATH] = config_parser.get(PREPROCESSING, DATASET_PATH)
+    config[DATASET_PATH] = add_parent_dir(config[PARENT_DIR], 
+                                            config_parser.get(PREPROCESSING, DATASET_PATH))
 
     #Dataset Parameters
     config[BATCH_SIZE] = int(config_parser.get(DATASET, BATCH_SIZE))
@@ -33,6 +42,7 @@ def get_config(config_parser):
     #Convolution Layer Parameters
     config[FILTER_SIZES] = json.loads(config_parser.get(CONVOLUTION, FILTER_SIZES))
     config[KERNEL_SIZES] = json.loads(config_parser.get(CONVOLUTION, KERNEL_SIZES))
+    config[PADDING] = config_parser.get(CONVOLUTION, PADDING)
 
     #GRUCell Parameters
     config[GRU_CELL_SIZE] = int(config_parser.get(GRU, GRU_CELL_SIZE))

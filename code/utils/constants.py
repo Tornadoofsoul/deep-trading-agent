@@ -1,10 +1,12 @@
+#Global
+PARENT_DIR = "PARENT_DIR"
+
 #Logging
 LOG_FILE = "LOG_FILE"
 SAVE_DIR = "SAVE_DIR"
 TENSORBOARD_LOG_DIR = "TENSORBOARD_LOG_DIR"
 
 #Preprocessing Dataset
-TRANSACTIONS_FILE = "TRANSACTIONS_FILE"
 DATASET_PATH = "DATASET_PATH"
 
 #DeepSense Parameters
@@ -26,6 +28,9 @@ GRU_KEEP_PROB = "GRU_KEEP_PROB"
 ## Convolution Layer Parameters
 FILTER_SIZES = "FILTER_SIZES"
 KERNEL_SIZES = "KERNEL_SIZES"
+PADDING = "PADDING"
+SAME = "SAME"
+VALID = "VALID"
 
 ## GRU Parameters
 GRU_CELL_SIZE = "GRU_CELL_SIZE"
@@ -39,6 +44,7 @@ CONVOLUTION = "convolution"
 DATASET = "dataset"
 DENSE = "dense"
 DROPOUT = "dropout"
+GLOBAL = "global"
 GRU = "gru"
 LOGGING = "logging"
 PREPROCESSING = "preprocessing"

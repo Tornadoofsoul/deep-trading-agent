@@ -1,10 +1,12 @@
+[global]
+PARENT_DIR = 
+
 [logging]
 LOG_FILE = 
 SAVE_DIR = 
 TENSORBOARD_LOG_DIR = 
 
 [preprocessing]
-TRANSACTIONS_FILE = 
 DATASET_PATH = 
 
 [dataset]
@@ -25,6 +27,7 @@ GRU_KEEP_PROB =
 [convolution]
 FILTER_SIZES = 
 KERNEL_SIZES = 
+PADDING = 
 
 [gru]
 GRU_CELL_SIZE = 

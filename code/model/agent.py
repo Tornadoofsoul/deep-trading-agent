@@ -10,7 +10,7 @@ import numpy as np
 
 from model.baseagent import BaseAgent
 from model.deepsense import DeepSense
-from model.deepsenseparams import DeepSenseParams
+from model.deepsenseparams import DeepSenseParams, DropoutKeepProbs
 from model.environment import Environment
 from model.history import History
 from model.replay_memory import ReplayMemory
@@ -18,12 +18,11 @@ from model.util import clipped_error
 
 from utils.constants import *
 from utils.strings import *
-from utils.util import print_and_log_message, print_and_log_message_list
                         
 class Agent(BaseAgent):
     '''Deep Trading Agent based on Deep Q Learning'''
     '''TODO: 
-        1. play
+        1. add `play` function to run tests in the simulated environment
     '''
 
     def __init__(self, sess, logger, config, env):
@@ -56,7 +55,7 @@ class Agent(BaseAgent):
         max_avg_ep_reward = 0
         ep_rewards, actions = [], []
 
-        self.env.new_random_episode(self.history, self.replay_memory)
+        trade_rem = self.env.new_random_episode(self.history, self.replay_memory)
 
         for self.step in tqdm(range(start_step, self.max_step), ncols=70, initial=start_step):
             if self.step == self.learn_start:
@@ -65,11 +64,11 @@ class Agent(BaseAgent):
                 ep_rewards, actions = [], []
 
             # 1. predict
-            action = self.predict(self.history.history)
+            action = self.predict((self.history.history, trade_rem))
             # 2. act
-            screen, reward, terminal = self.env.act(action)
+            screen, reward, terminal, trade_rem = self.env.act(action)
             # 3. observe
-            self.observe(screen, reward, action, terminal)
+            self.observe(screen, reward, action, terminal, trade_rem)
 
             if terminal:
                 self.env.new_random_episode(self.history, self.replay_memory)
@@ -98,7 +97,7 @@ class Agent(BaseAgent):
 
                     message = 'avg_r: %.4f, avg_l: %.6f, avg_q: %3.6f, avg_ep_r: %.4f, max_ep_r: %.4f, min_ep_r: %.4f, # game: %d' \
                         % (avg_reward, avg_loss, avg_q, avg_ep_reward, max_ep_reward, min_ep_reward, num_episodes)
-                    print_and_log_message(message, self.logger)
+                    self.logger.info(message)
 
                     if max_avg_ep_reward * 0.9 <= avg_ep_reward:
                         self.sess.run(
@@ -117,7 +116,7 @@ class Agent(BaseAgent):
                             'episode.max reward': max_ep_reward,
                             'episode.min reward': min_ep_reward,
                             'episode.avg reward': avg_ep_reward,
-                            'episode.num of game': num_episodes,
+                            'episode.num of episodes': num_episodes,
                             'episode.rewards': ep_rewards,
                             'episode.actions': actions,
                             'training.learning_rate': self.sess.run(
@@ -135,7 +134,9 @@ class Agent(BaseAgent):
                     ep_rewards = []
                     actions = []
     
-    def predict(self, s_t, test_ep=None):
+    def predict(self, state, test_ep=None):
+        s_t = state[0]
+        trade_rem_t = state[1]
         ep = test_ep or (self.ep_end +
             max(0., (self.ep_start - self.ep_end) \
             * (self.ep_end_t - max(0., self.step - self.learn_start)) / self.ep_end_t))
@@ -145,17 +146,24 @@ class Agent(BaseAgent):
         else:
             action = self.sess.run(
                 fetches=self.q.action,
-                feed_dict={self.q.phase: 0,  self.s_t: [s_t]}
+                feed_dict={
+                    self.q.phase: 0,  
+                    self.s_t: [s_t], 
+                    self.trade_rem_t: [trade_rem_t],
+                    self.q_conv_keep_prob: 1.0,
+                    self.q_dense_keep_prob: 1.0,
+                    self.q_gru_keep_prob: 1.0
+                }
             )[0]
 
         return action
 
-    def observe(self, screen, reward, action, terminal):
+    def observe(self, screen, reward, action, terminal, trade_rem):
         #clip reward in the range min to max
         reward = max(self.min_reward, min(self.max_reward, reward))
         
         self.history.add(screen)
-        self.replay_memory.add(screen, reward, action, terminal)
+        self.replay_memory.add(screen, reward, action, terminal, trade_rem)
 
         if self.step > self.learn_start:
             if self.step % self.train_frequency == 0:
@@ -166,11 +174,17 @@ class Agent(BaseAgent):
 
     def q_learning_mini_batch(self):
         if self.replay_memory.count >= self.replay_memory.history_length:
-            s_t, action, reward, s_t_plus_1, terminal = self.replay_memory.sample
+            state_t, action, reward, state_t_plus_1, terminal = self.replay_memory.sample
+            s_t, trade_rem_t = state_t[0], state_t[1]
+            s_t_plus_1, trade_rem_t_plus_1 = state_t_plus_1[0], state_t_plus_1[1]
             
             q_t_plus_1 = self.sess.run(
                 fetches=self.t_q.values,
-                feed_dict={self.t_q.phase: 0, self.t_s_t: s_t_plus_1}
+                feed_dict={
+                    self.t_q.phase: 0, 
+                    self.t_s_t: s_t_plus_1, 
+                    self.t_trade_rem_t: trade_rem_t_plus_1
+                }
             )
 
             max_q_t_plus_1 = np.max(q_t_plus_1, axis=1)
@@ -183,8 +197,12 @@ class Agent(BaseAgent):
                 self.target_q: target_q,
                 self.action: action,
                 self.s_t: s_t,
-                self.learning_rate_step: self.step,
-                })
+                self.trade_rem_t: trade_rem_t,
+                self.q_conv_keep_prob: self.config[CONV_KEEP_PROB],
+                self.q_dense_keep_prob: self.config[DENSE_KEEP_PROB],
+                self.q_gru_keep_prob: self.config[GRU_KEEP_PROB],
+                self.learning_rate_step: self.step
+            })
 
             self.summary_writer.add_summary(avg_q_summary, self.step)
             self.total_loss += loss
@@ -196,20 +214,44 @@ class Agent(BaseAgent):
             self.s_t = tf.placeholder(
                 dtype=tf.float32,
                 shape=[None, self.replay_memory.history_length, 
-                            self.replay_memory.num_channels]
+                            self.replay_memory.num_channels],
+                name=HISTORICAL_PRICES
             )
+            self.trade_rem_t = tf.placeholder(
+                dtype=tf.float32,
+                shape=[None,],
+                name=TRADE_REM
+            )
+            
+            with tf.variable_scope(DROPOUT_KEEP_PROBS):
+                self.q_conv_keep_prob = tf.placeholder(tf.float32)
+                self.q_dense_keep_prob = tf.placeholder(tf.float32)
+                self.q_gru_keep_prob = tf.placeholder(tf.float32)
+
+        params.dropoutkeepprobs = DropoutKeepProbs(
+                    self.q_conv_keep_prob,
+                    self.q_dense_keep_prob,
+                    self.q_gru_keep_prob
+                )
         self.q = DeepSense(params, self.logger, self.sess, self.config, name=Q_NETWORK)
-        self.q.build_model(self.s_t)
-        update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
+        self.q.build_model((self.s_t, self.trade_rem_t))
 
         with tf.variable_scope(TARGET):
             self.t_s_t = tf.placeholder(
                 dtype=tf.float32,
                 shape=[None, self.replay_memory.history_length, 
-                            self.replay_memory.num_channels]
+                            self.replay_memory.num_channels],
+                name=HISTORICAL_PRICES
             )
+            self.t_trade_rem_t = tf.placeholder(
+                dtype=tf.float32,
+                shape=[None,],
+                name=TRADE_REM
+            )
+
+        params.dropoutkeepprobs = DropoutKeepProbs()
         self.t_q = DeepSense(params, self.logger, self.sess, self.config, name=T_Q_NETWORK)
-        self.t_q.build_model(self.t_s_t, train=False)
+        self.t_q.build_model((self.t_s_t, self.t_trade_rem_t))
 
         with tf.variable_scope(UPDATE_TARGET_NETWORK):
             self.q_weights_placeholders = {}
@@ -251,14 +293,13 @@ class Agent(BaseAgent):
                         self.learning_rate_decay,
                         staircase=True))
 
-                with tf.control_dependencies(update_ops):
-                    self.optimizer = tf.train.RMSPropOptimizer(
-                        self.learning_rate_op, momentum=0.95, epsilon=0.01).minimize(self.loss)
+                self.optimizer = tf.train.RMSPropOptimizer(
+                    self.learning_rate_op, momentum=0.95, epsilon=0.01).minimize(self.loss)
 
         with tf.variable_scope(SUMMARY):
             scalar_summary_tags = ['average.reward', 'average.loss', 'average.q', \
                 'episode.max reward', 'episode.min reward', 'episode.avg reward', \
-                'episode.num of game', 'training.learning_rate']            
+                'episode.num of episodes', 'training.learning_rate']            
 
             self.summary_placeholders = {}
             self.summary_ops = {}
